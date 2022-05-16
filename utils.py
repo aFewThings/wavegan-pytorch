@@ -1,10 +1,13 @@
+from collections import defaultdict
 import os
 import time
 import math
+from sklearn.model_selection import train_test_split
 import torch
 import random
 import librosa
 import librosa.display
+import soundfile as sf
 import numpy as np
 from torch.utils import data
 import matplotlib
@@ -47,7 +50,7 @@ def visualize_audio(audio_tensor, is_monphonic=False):
         plt.subplot(10, 2, i + 1)
         if is_monphonic:
             plt.title("Monophonic %i" % (i + 1))
-            librosa.display.waveplot(audio[0], sr=sampling_rate)
+            librosa.display.waveshow(audio[0], sr=sampling_rate)
         else:
             D = librosa.amplitude_to_db(np.abs(librosa.stft(audio[0])), ref=np.max)
             librosa.display.specshow(D, y_axis="linear")
@@ -169,7 +172,7 @@ def save_samples(epoch_samples, epoch):
     for idx, sample in enumerate(epoch_samples):
         output_path = os.path.join(sample_dir, "{}.wav".format(idx + 1))
         sample = sample[0]
-        librosa.output.write_wav(output_path, sample, sampling_rate)
+        sf.write(output_path, sample, sampling_rate)
 
 
 #############################
@@ -212,6 +215,106 @@ def weights_init(m):
 class WavDataLoader:
     def __init__(self, folder_path, audio_extension="wav"):
         self.signal_paths = get_recursive_files(folder_path, audio_extension)
+        self.data_iter = None
+        self.initialize_iterator()
+
+    def initialize_iterator(self):
+        data_iter = create_stream_reader(self.signal_paths)
+        self.data_iter = iter(data_iter)
+
+    def __len__(self):
+        return len(self.signal_paths)
+
+    def numpy_to_tensor(self, numpy_array):
+        numpy_array = numpy_array[:, np.newaxis, :]
+        return torch.Tensor(numpy_array).to(device)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        x = next(self.data_iter)
+        return self.numpy_to_tensor(x["single"])
+
+
+
+"""helper function"""
+def select_species(data_list, pick_species=None):
+    new_data_list = []
+    if pick_species is not None:
+        for file_path in data_list:
+            pathsplit = os.path.basename(file_path).split('_')
+            for name in pick_species:
+                if len(pathsplit) == 3: # 22050_silence_1400
+                    if name == pathsplit[1]:
+                        new_data_list.append(file_path)
+                else:
+                    if pathsplit[1] == 'None':
+                        if name == 'None_silence':
+                            new_data_list.append(file_path)
+                    else:
+                        if name == pathsplit[2]:
+                            new_data_list.append(file_path)
+    else:
+        new_data_list = data_list
+
+    return new_data_list
+
+def count_species(data_list):
+    countdict = defaultdict(lambda: defaultdict(int)) # [양서류][맹꽁이] = 0
+    countset = defaultdict(int) # dictionary 새로운 key 추가되면 0으로 초기화
+    
+    #강 - 종으로 count
+    file_dir = data_list
+    for file_path in file_dir:
+        pathsplit = os.path.basename(file_path).split('_')
+
+        if len(pathsplit) == 3: # 22050_silence_1400
+            countdict[pathsplit[1]][pathsplit[1]] += 1 # dict[silence][silence] += 1
+        else:
+            if pathsplit[1] == 'None': # 22050_None_silence_1
+                countdict[pathsplit[2]][pathsplit[1] + '_' + pathsplit[2]] += 1 # dict[silence][None_silence] += 1
+            else: # 나머지, 22050_양서류_맹꽁이_신화_800
+                countdict[pathsplit[1]][pathsplit[2]] += 1 # dict[양서류][맹꽁이] += 1
+    
+    # 종만 count
+    for k,v in countdict.items():    
+        for k1,v1 in v.items():
+            countset[k1] = v1
+
+    return countset
+
+"""my asc task"""
+class MyWavDataLoader:
+    def __init__(self, folder_path, pick_species, is_train=True):
+        data_list = glob.glob(os.path.join(folder_path, '*.wav'))
+        picked_data_list = select_species(data_list, pick_species)
+        countset = count_species(picked_data_list)
+        
+        # make labels of total data
+        labels = []
+        for idx, (k, v) in enumerate(countset.items()):
+            label = idx
+            labels.extend([label] * v)
+        
+        # stratified-split dataset
+        total_indices = torch.arange(len(labels))
+        train_indices, valid_indices = train_test_split(total_indices, 
+                                        test_size=0.2, stratify=labels, random_state=2019)
+        self.train_list, self.valid_list = [], []
+        # self.train_labels, self.valid_labels = [], []
+        if is_train:
+            for idx in train_indices:
+                self.train_list.append(picked_data_list[idx]) # Note: 데이터 순서랑 라벨 순서가 같아야함.
+                # self.train_labels.append(labels[idx])
+            # self.train_labels = torch.tensor(self.train_labels)
+        else:
+            for idx in valid_indices:
+                self.valid_list.append(picked_data_list[idx])
+                # self.valid_labels.append(labels[idx])
+            # self.valid_labels = torch.tensor(self.valid_labels)
+        
+        self.signal_paths = self.train_list if is_train else self.valid_list
         self.data_iter = None
         self.initialize_iterator()
 

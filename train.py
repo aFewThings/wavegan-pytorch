@@ -216,8 +216,10 @@ class WaveGan_GP(object):
 
 
 if __name__ == "__main__":
-    train_loader = WavDataLoader(os.path.join(target_signals_dir, "train"))
-    val_loader = WavDataLoader(os.path.join(target_signals_dir, "valid"))
+    # train_loader = WavDataLoader(os.path.join(target_signals_dir, "train"))
+    # val_loader = WavDataLoader(os.path.join(target_signals_dir, "valid"))
+    train_loader = MyWavDataLoader(target_signals_dir, pick_species=pick_species, is_train=True)
+    val_loader = MyWavDataLoader(target_signals_dir, pick_species=pick_species, is_train=False)
 
     wave_gan = WaveGan_GP(train_loader, val_loader)
     wave_gan.train()
