@@ -1,6 +1,6 @@
 from params import *
 from utils import *
-from models import *
+from wavegan import *
 import torch.optim as optim
 import torch
 from torch.autograd import grad, Variable

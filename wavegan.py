@@ -1,9 +1,30 @@
+"""
+wavegan-pytorch
+https://github.com/mostafaelaraby/wavegan-pytorch/tree/master
+"""
 import torch
 import torch.nn as nn
-from torch.nn import Parameter
 import torch.nn.functional as F
 import torch.utils.data
-from params import *
+
+#############################
+# Model Params
+#############################
+# n_iterations = 100000
+# use_batchnorm = False
+# lr_g = 1e-4
+# lr_d = 3e-4 # you can use with discriminator having a larger learning rate than generator instead of using n_critic updates ttur https://arxiv.org/abs/1706.08500
+# beta1 = 0.5
+# beta2 = 0.9
+# decay_lr = False # used to linearly deay learning rate untill reaching 0 at iteration 100,000
+# generator_batch_size_factor = 1 # in some cases we might try to update the generator with double batch size used in the discriminator https://arxiv.org/abs/1706.08500
+# n_critic = 1 # update generator every n_critic steps if lr_g = lr_d the n_critic's default value is 5 
+# # gradient penalty regularization factor.
+# validate=False
+# p_coeff = 10
+# batch_size = 10
+noise_latent_dim = 100  # size of the sampling noise
+# model_capacity_size = 32    # model capacity during training can be reduced to 32 for larger window length of 2 seconds and 4 seconds
 
 
 class Transpose1dLayer(nn.Module):
@@ -11,7 +32,7 @@ class Transpose1dLayer(nn.Module):
         self,
         in_channels,
         out_channels,
-        kernel_size,
+        kernel_size, # 25
         stride,
         padding=11,
         upsample=None,
@@ -37,6 +58,9 @@ class Transpose1dLayer(nn.Module):
         self.transpose_ops = nn.Sequential(*operation_list)
 
     def forward(self, x):
+        # if upsample: nearest upsample, reflection_pad(ConstantPad1d), conv1d(Conv1d), batch_norm
+        # else: Conv1dTrans (ConvTranspose1d), batch_norm
+
         if self.upsample:
             # recommended by wavgan paper to use nearest upsampling
             x = nn.functional.interpolate(x, scale_factor=self.upsample, mode="nearest")
@@ -158,24 +182,24 @@ class WaveGANGenerator(nn.Module):
 
         deconv_layers = [
             Transpose1dLayer(
-                self.dim_mul * model_size,
-                (self.dim_mul * model_size) // 2,
+                self.dim_mul * model_size, # 1024
+                (self.dim_mul * model_size) // 2, # 512
                 25,
                 stride,
                 upsample=upsample,
                 use_batch_norm=use_batch_norm,
             ),
             Transpose1dLayer(
-                (self.dim_mul * model_size) // 2,
-                (self.dim_mul * model_size) // 4,
+                (self.dim_mul * model_size) // 2, # 512
+                (self.dim_mul * model_size) // 4, # 256
                 25,
                 stride,
                 upsample=upsample,
                 use_batch_norm=use_batch_norm,
             ),
             Transpose1dLayer(
-                (self.dim_mul * model_size) // 4,
-                (self.dim_mul * model_size) // 8,
+                (self.dim_mul * model_size) // 4, # 256
+                (self.dim_mul * model_size) // 8, # 128
                 25,
                 stride,
                 upsample=upsample,
@@ -235,19 +259,22 @@ class WaveGANGenerator(nn.Module):
             if isinstance(m, nn.ConvTranspose1d) or isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight.data)
 
-    def forward(self, x):
+    def forward(self, x, labels=None):
+         # b x 100 -> b x 16384 -> b x 1024 x 16
         x = self.fc1(x).view(-1, self.dim_mul * self.model_size, 16)
         if self.use_batch_norm:
             x = self.bn1(x)
         x = F.relu(x)
         if self.verbose:
-            print(x.shape)
+            print(x.shape) # b x 1024 x 16
 
         for deconv in self.deconv_list[:-1]:
             x = F.relu(deconv(x))
             if self.verbose:
-                print(x.shape)
-        output = torch.tanh(self.deconv_list[-1](x))
+                print(x.shape) # b x 512 x 64, b x 256 x 256, b x 128 x 1024, b x 64 x 4096
+        output = torch.tanh(self.deconv_list[-1](x)) # 1 ~ -1 사이 raw waveform 생성.
+        if self.verbose:
+            print(output.shape) # b x 1 x 16384
         return output
 
 
@@ -364,16 +391,17 @@ class WaveGANDiscriminator(nn.Module):
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight.data)
 
-    def forward(self, x):
+    def forward(self, x, labels=None):
+        # x: b x 1 x 16384
         for conv in self.conv_layers:
             x = conv(x)
             if self.verbose:
-                print(x.shape)
+                print(x.shape) # b x 64 x 4096, b x 128 x 1024, b x 256 x 256, b x 512 x 64, b x 1024 x 16
         x = x.view(-1, self.fc_input_size)
         if self.verbose:
-            print(x.shape)
+            print(x.shape) # b x 16384
 
-        return self.fc1(x)
+        return self.fc1(x) # b x 1
 
 
 if __name__ == "__main__":
@@ -394,4 +422,3 @@ if __name__ == "__main__":
         print(out2.shape)
         assert out2.shape == (10, 1)
         print("==========================")
-

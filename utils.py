@@ -284,7 +284,7 @@ def count_species(data_list):
 
     return countset
 
-"""my asc task"""
+"""my ASC task"""
 class MyWavDataLoader:
     def __init__(self, folder_path, pick_species, is_train=True):
         data_list = glob.glob(os.path.join(folder_path, '*.wav'))
